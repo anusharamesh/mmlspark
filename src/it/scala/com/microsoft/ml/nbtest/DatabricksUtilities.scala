@@ -16,7 +16,7 @@ import com.microsoft.ml.spark.io.split2.HasHttpClient
 import org.apache.commons.io.IOUtils
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.StringEntity
-import org.spark_project.guava.io.BaseEncoding
+import org.sparkproject.guava.io.BaseEncoding
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsArray, JsObject, JsValue, _}
 
