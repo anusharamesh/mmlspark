@@ -10,6 +10,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.write._
 import org.apache.spark.sql.connector.write.streaming._
+import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -17,13 +18,6 @@ import scala.collection.mutable
 
 class HTTPSinkProviderV2 extends DataSourceRegister
   with Logging {
-
-  override def createStreamWriter(queryId: String,
-                                  schema: StructType,
-                                  mode: OutputMode,
-                                  options: CaseInsensitiveStringMap): StreamingWrite = {
-    new HTTPWriter(schema, options)
-  }
 
   def shortName(): String = "HTTPv2"
 }

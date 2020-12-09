@@ -44,20 +44,7 @@ import scala.util.Try
 class HTTPSourceProviderV2
   extends DataSourceRegister with Logging {
 
-  def createContinuousReader(schema: Optional[StructType],
-                                      checkpointLocation: String,
-                                      options: CaseInsensitiveStringMap): ContinuousStream = {
-    new HTTPContinuousStream(options = options)
-  }
-
   override def shortName(): String = "HTTPv2"
-
-  def createMicroBatchReader(schema: Optional[StructType],
-                                      checkpointLocation: String,
-                                      options: CaseInsensitiveStringMap): MicroBatchStream = {
-    logInfo("Creating Microbatch reader")
-    new HTTPMicroBatchStream(continuous = false, options = options)
-  }
 }
 
 private[streaming] case class ServiceInfo(name: String,
