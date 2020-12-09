@@ -9,7 +9,6 @@ import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
 import java.util.{Optional, UUID}
 
 import com.jcraft.jsch.Session
-import com.microsoft.ml.spark._
 import com.microsoft.ml.spark.core.env.StreamUtilities
 import com.microsoft.ml.spark.io.http._
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
@@ -22,18 +21,17 @@ import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.connector.read._
+import org.apache.spark.sql.connector.read.streaming._
 import org.apache.spark.sql.execution.streaming.HTTPServerUtils
-import org.apache.spark.sql.sources.v2._
-import org.apache.spark.sql.sources.v2.reader._
-import org.apache.spark.sql.sources.v2.reader.streaming._
-import org.apache.spark.sql.sources.{DataSourceRegister, v2}
+import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.{SparkContext, TaskContext}
 import org.json4s.DefaultFormats
 import org.json4s.jackson.Serialization
 
-import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -42,6 +40,26 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Try
 
+
+class HTTPSourceProviderV2
+  extends DataSourceRegister with Logging {
+
+  def createContinuousReader(schema: Optional[StructType],
+                                      checkpointLocation: String,
+                                      options: CaseInsensitiveStringMap): ContinuousStream = {
+    new HTTPContinuousStream(options = options)
+  }
+
+  override def shortName(): String = "HTTPv2"
+
+  def createMicroBatchReader(schema: Optional[StructType],
+                                      checkpointLocation: String,
+                                      options: CaseInsensitiveStringMap): MicroBatchStream = {
+    logInfo("Creating Microbatch reader")
+    new HTTPMicroBatchStream(continuous = false, options = options)
+  }
+}
+
 private[streaming] case class ServiceInfo(name: String,
                                           host: String,
                                           port: Int,
@@ -49,28 +67,6 @@ private[streaming] case class ServiceInfo(name: String,
                                           localIp: String,
                                           publicIp: Option[String])
 
-class HTTPSourceProviderV2 extends DataSourceRegister
-  with DataSourceV2 with ContinuousReadSupport with MicroBatchReadSupport with Logging {
-
-  override def createContinuousReader(schema: Optional[StructType],
-                                      checkpointLocation: String,
-                                      options: DataSourceOptions): ContinuousReader = {
-    new HTTPContinuousReader(options = options)
-  }
-
-  override def shortName(): String = "HTTPv2"
-
-  override def createMicroBatchReader(schema: Optional[StructType],
-                                      checkpointLocation: String,
-                                      options: DataSourceOptions): MicroBatchReader = {
-    logInfo("Creating Microbatch reader")
-    new HTTPMicroBatchReader(continuous = false, options = options)
-  }
-}
-
-object HTTPSourceProviderV2 {
-  val VERSION = 2
-}
 
 private[streaming] object HTTPOffset {
   def getStartingOffset(numPartitions: Int): HTTPOffset = {
@@ -84,7 +80,7 @@ private[streaming] object HTTPOffset {
 }
 
 private[streaming] case class HTTPOffset(partitionToValue: Map[Int, Long])
-  extends v2.reader.streaming.Offset {
+  extends Offset {
   implicit val defaultFormats: DefaultFormats = DefaultFormats
   override val json: String = Serialization.write(partitionToValue)
 }
@@ -181,46 +177,42 @@ private[streaming] case class WorkerServiceConfig(host: String,
                                                   epochLength: Long
                                                  )
 
-private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: DataSourceOptions)
-  extends MicroBatchReader with Logging {
+private[streaming] class HTTPMicroBatchStream(continuous: Boolean, options: CaseInsensitiveStringMap)
+  extends MicroBatchStream with Logging {
   implicit val defaultFormats: DefaultFormats = DefaultFormats
 
-  val numPartitions: Int = options.get(HTTPSourceV2.NumPartitions).orElse("2").toInt
-  val host: String = options.get(HTTPSourceV2.Host).orElse("localhost")
+  val numPartitions: Int = options.getInt(HTTPSourceV2.NumPartitions,2)
+  val host: String = options.get(HTTPSourceV2.Host,"localhost")
   val port: Int = options.getInt(HTTPSourceV2.Port, 8888)
-  val path: String = options.get(HTTPSourceV2.Path).get
-  val name: String = options.get(HTTPSourceV2.NAME).get
-  val epochLength: Long = options.get(HTTPSourceV2.EpochLength).orElse("30000").toLong
+  val path: String = options.get(HTTPSourceV2.Path)
+  val name: String = options.get(HTTPSourceV2.NAME)
+  val epochLength: Long = options.getLong(HTTPSourceV2.EpochLength, 30000)
 
-  val forwardingOptions: collection.Map[String, String] = options.asMap().asScala
+  val forwardingOptions: collection.Map[String, String] = options.asCaseSensitiveMap().asScala
     .filter { case (k, _) => k.startsWith("forwarding") }
 
   HTTPSourceStateHolder.initServiceInfo(name, path)
 
-  private lazy val driverService: HttpServer =
+  protected lazy val driverService: HttpServer =
     DriverServiceUtils.createDriverService(name)
 
   override def deserializeOffset(json: String): Offset = {
     HTTPOffset(Serialization.read[Map[Int, Long]](json))
   }
 
-  override def readSchema(): StructType = {
-    HTTPSourceV2.Schema
-  }
-
   protected var startOffset: HTTPOffset = _
   protected var endOffset: HTTPOffset = _
   protected var currentOffset: HTTPOffset = _
 
-  override def getStartOffset: Offset = {
-    Option(startOffset).getOrElse(throw new IllegalStateException("start offset not set"))
+  override def initialOffset: Offset = {
+    HTTPOffset.getStartingOffset(numPartitions)
   }
 
-  override def getEndOffset: Offset = {
+  override def latestOffset: Offset = {
     Option(endOffset).getOrElse(throw new IllegalStateException("end offset not set"))
   }
 
-  private def getPartitionOffsetMap(offset: Offset): Map[Int, Long] = {
+  protected def getPartitionOffsetMap(offset: Offset): Map[Int, Long] = {
     val partitionMap = offset match {
       case off: HTTPOffset => off.partitionToValue
       case off =>
@@ -236,7 +228,15 @@ private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: Data
     partitionMap
   }
 
-  override def planInputPartitions(): java.util.List[InputPartition[InternalRow]] = {
+  override def commit(end: Offset): Unit = {}
+
+  override def stop(): Unit = {
+    logDebug("Stopping 1")
+    driverService.stop(0)
+    HTTPSourceStateHolder.cleanUp(name)
+  }
+
+  override def planInputPartitions(start: Offset, end: Offset): Array[InputPartition] = {
     assert(startOffset != null,
       "start offset should already be set before create read tasks.")
     if (!continuous) {
@@ -250,34 +250,36 @@ private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: Data
       DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
     Range(0, numPartitions).map { i =>
       HTTPInputPartition(continuous, name, config, startMap(i), endMap.map(_ (i)), i)
-        : InputPartition[InternalRow]
-    }.toList.asJava
+        : InputPartition
+    }.toArray
   }
 
-  override def commit(end: Offset): Unit = {}
+  override def createReaderFactory(): PartitionReaderFactory = {
 
-  override def stop(): Unit = {
-    logDebug("Stopping 1")
-    driverService.stop(0)
-    HTTPSourceStateHolder.cleanUp(name)
+    val startMap = getPartitionOffsetMap(startOffset)
+    val endMap = if (!continuous) Some(getPartitionOffsetMap(endOffset)) else None
+    val config = WorkerServiceConfig(host, port, path, forwardingOptions,
+      DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
+    HTTPMicroBatchReaderFactory(continuous = true, name, config, startMap(0), endMap.map(_ (0)), 0)
   }
-
-  override def setOffsetRange(start: Optional[Offset], end: Optional[Offset]): Unit = {
-    startOffset = Option(start.orElse(null)).getOrElse(
-      HTTPOffset.getStartingOffset(numPartitions))
-      .asInstanceOf[HTTPOffset]
-    endOffset = Option(end.orElse(null)).getOrElse {
-      currentOffset = HTTPOffset.increment(
-        Option(currentOffset).getOrElse(HTTPOffset.getStartingOffset(numPartitions)))
-      currentOffset
-    }.asInstanceOf[HTTPOffset]
-  }
-
 }
 
-private[streaming] class HTTPContinuousReader(options: DataSourceOptions)
-  extends HTTPMicroBatchReader(continuous = true, options = options) with ContinuousReader {
-  override def setStartOffset(start: Optional[Offset]): Unit =
+private[streaming] case class HTTPMicroBatchReaderFactory(continuous: Boolean,
+                                                          name: String,
+                                                          config: WorkerServiceConfig,
+                                                          startEpoch: Long,
+                                                          endEpoch: Option[Long],
+                                                          partitionIndex: Int)
+  extends ContinuousPartitionReaderFactory {
+  override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
+    new HTTPInputPartitionReader(continuous, name, config, startEpoch, endEpoch, partitionIndex)
+  }
+}
+
+private[streaming] class HTTPContinuousStream(options: CaseInsensitiveStringMap)
+  extends HTTPMicroBatchStream(continuous = true, options = options) with ContinuousStream {
+
+  def initialOffset(start: Optional[Offset]): Unit =
     this.startOffset = start.orElse(HTTPOffset.getStartingOffset(numPartitions))
       .asInstanceOf[HTTPOffset]
 
@@ -287,6 +289,37 @@ private[streaming] class HTTPContinuousReader(options: DataSourceOptions)
       case HTTPPartitionOffset(i, epoch) => (i, epoch)
     }
     HTTPOffset(Map(tuples: _*))
+  }
+
+  override def planInputPartitions(start: Offset): Array[InputPartition] = {
+    assert(startOffset != null,
+      "start offset should already be set before create read tasks.")
+
+    val startMap = getPartitionOffsetMap(startOffset)
+    val config = WorkerServiceConfig(host, port, path, forwardingOptions,
+      DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
+    Range(0, numPartitions).map { i =>
+      HTTPInputPartition(continuous = true, name, config, startMap(i), Option[Long](i), i)
+        : InputPartition
+    }.toArray
+  }
+
+  override def createContinuousReaderFactory(): ContinuousPartitionReaderFactory = {
+    val startMap = getPartitionOffsetMap(startOffset)
+    val config = WorkerServiceConfig(host, port, path, forwardingOptions,
+      DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
+    HTTPContinuousReaderFactory(continuous = true, name, config, startMap(0), Option[Long](0), 0)
+  }
+}
+
+private[streaming] case class HTTPContinuousReaderFactory(continuous: Boolean,
+                                                          name: String,
+                                                          config: WorkerServiceConfig,
+                                                          startEpoch: Long,
+                                                          endEpoch: Option[Long],
+       partitionIndex: Int) extends ContinuousPartitionReaderFactory {
+  override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
+    new HTTPInputPartitionReader(continuous, name, config, startEpoch, endEpoch, partitionIndex)
   }
 }
 
@@ -298,16 +331,16 @@ private[streaming] case class HTTPInputPartition(continuous: Boolean,
                                                  partitionIndex: Int
                                                 )
 
-  extends ContinuousInputPartition[InternalRow] with Logging {
+  extends InputPartition with Logging {
 
-  override def createContinuousReader(
-                                       offset: PartitionOffset): InputPartitionReader[InternalRow] = {
+   def createContinuousReader(
+                                       offset: PartitionOffset): PartitionReader[InternalRow] = {
     new HTTPInputPartitionReader(
       continuous, name, config, startValue, endValue, partitionIndex
     )
   }
 
-  override def createPartitionReader(): InputPartitionReader[InternalRow] = {
+   def createPartitionReader(): PartitionReader[InternalRow] = {
     logInfo("creating partition reader")
     new HTTPInputPartitionReader(
       continuous, name, config, startValue, endValue, partitionIndex
@@ -479,8 +512,9 @@ private[streaming] class WorkerServer(val name: String,
       if (previousEpoch == localEpoch) {
         logWarning(s"Adding to crash list localEpoch:$localEpoch globalEpoch:$epoch partition:$partitionId")
         val recoveredQueue = new LinkedBlockingQueue[CachedRequest]()
-        recoveredQueue.addAll(historyQueues.getOrElse(
-          (localEpoch, partitionId), new ListBuffer[CachedRequest]()))
+        val s = historyQueues.getOrElse(
+          (localEpoch, partitionId), new ListBuffer[CachedRequest]).asJava
+        recoveredQueue.addAll(s)
         recoveredPartitions.update((localEpoch, partitionId), recoveredQueue)
       }
     }
@@ -680,7 +714,7 @@ private[streaming] class HTTPInputPartitionReader(continuous: Boolean,
                                                   startEpoch: Long,
                                                   endEpoch: Option[Long],
                                                   partitionIndex: Int)
-  extends ContinuousInputPartitionReader[InternalRow] with Logging {
+  extends ContinuousPartitionReader[InternalRow] with Logging {
 
   val client: WorkerClient = HTTPSourceStateHolder.getOrCreateClient(name)
   val server: WorkerServer = HTTPSourceStateHolder.getOrCreateServer(

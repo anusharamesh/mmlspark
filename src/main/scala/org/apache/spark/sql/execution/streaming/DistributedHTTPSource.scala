@@ -273,8 +273,8 @@ class DistributedHTTPSource(name: String,
   /** Returns the data that is between the offsets (`start`, `end`]. */
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = synchronized {
     val startOrdinal =
-      start.flatMap(LongOffset.convert).getOrElse(LongOffset(-1)).offset
-    val endOrdinal = LongOffset.convert(end).getOrElse(LongOffset(-1)).offset
+      start.map(_.asInstanceOf[LongOffset]).getOrElse(LongOffset(-1)).offset
+    val endOrdinal = Option(end.asInstanceOf[LongOffset]).getOrElse(LongOffset(-1)).offset
     val toRow = HTTPRequestData.makeToRowConverter
 
     serverInfoDFStreaming.mapPartitions { _ =>
@@ -288,7 +288,7 @@ class DistributedHTTPSource(name: String,
   }
 
   override def commit(end: Offset): Unit = synchronized {
-    val newOffset = LongOffset.convert(end).getOrElse(
+    val newOffset = Option(end.asInstanceOf[LongOffset]).getOrElse(
       sys.error(s"DistributedHTTPSource.commit() received an offset ($end) that did not " +
         s"originate with an instance of this class")
     )
@@ -365,7 +365,7 @@ class DistributedHTTPSink(val options: Map[String, String])
   if (!options.contains("name")) {
     throw new AnalysisException("Set a name of an API to reply to")
   }
-  val name: String = options("name")
+  override val name: String = options("name")
 
   DistributedHTTPSink.ActiveSinks.update(name, this)
 
