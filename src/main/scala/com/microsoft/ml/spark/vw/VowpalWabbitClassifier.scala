@@ -4,16 +4,14 @@
 package com.microsoft.ml.spark.vw
 
 import com.microsoft.ml.spark.core.env.InternalWrapper
-import com.microsoft.ml.spark.core.schema.DatasetExtensions
-import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable}
-import org.apache.spark.ml.param._
-import org.apache.spark.ml.util._
+import com.microsoft.ml.spark.core.schema.DatasetExtensions._
 import org.apache.spark.ml.classification.{ProbabilisticClassificationModel, ProbabilisticClassifier}
 import org.apache.spark.ml.linalg.{Vector, Vectors}
+import org.apache.spark.ml.param._
+import org.apache.spark.ml.util._
+import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions.{col, udf}
-import org.vowpalwabbit.spark.VowpalWabbitExample
-import com.microsoft.ml.spark.core.schema.DatasetExtensions._
 
 import scala.math.exp
 
@@ -96,7 +94,7 @@ class VowpalWabbitClassificationModel(override val uid: String)
     throw new NotImplementedError("Not implemented")
   }
 
-  override protected def predictRaw(features: Row): Vector =
+  override def predictRaw(features: Row): Vector =
   {
     throw new NotImplementedError("Not implemented")
   }
