@@ -258,7 +258,7 @@ private[streaming] case class HTTPMicroBatchReaderFactory(continuous: Boolean,
                                                           endEpoch: Option[Long],
                                                           partitionIndex: Int)
   extends ContinuousPartitionReaderFactory {
-  override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
+  override def createReader(partition: InputPartition): ContinuousPartitionReader[InternalRow] = {
     new HTTPInputPartitionReader(continuous, name, config, startEpoch, endEpoch, partitionIndex)
   }
 }
@@ -305,7 +305,7 @@ private[streaming] case class HTTPContinuousReaderFactory(continuous: Boolean,
                                                           startEpoch: Long,
                                                           endEpoch: Option[Long],
        partitionIndex: Int) extends ContinuousPartitionReaderFactory {
-  override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
+  override def createReader(partition: InputPartition): ContinuousPartitionReader[InternalRow] = {
     new HTTPInputPartitionReader(continuous, name, config, startEpoch, endEpoch, partitionIndex)
   }
 }
