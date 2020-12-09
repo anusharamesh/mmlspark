@@ -3,6 +3,7 @@
 
 package com.microsoft.ml.spark.cognitive
 
+import com.microsoft.ml.spark.cognitive.AzureSearchProtocol._
 import com.microsoft.ml.spark.io.http.{ErrorUtils, SimpleHTTPTransformer}
 import com.microsoft.ml.spark.io.powerbi.StreamMaterializer
 import com.microsoft.ml.spark.stages.{FixedMiniBatchTransformer, HasBatchSize, Lambda}
@@ -13,13 +14,11 @@ import org.apache.spark.internal.{Logging => SLogging}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.util._
 import org.apache.spark.ml.{ComplexParamsReadable, NamespaceInjections, PipelineModel}
-import org.apache.spark.sql.functions.{col, struct, to_json, udf, expr}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.DataStreamWriter
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Dataset, Row}
-import com.microsoft.ml.spark.cognitive.AzureSearchProtocol._
 import spray.json._
-import DefaultJsonProtocol._
 
 import scala.collection.JavaConverters._
 
@@ -326,7 +325,7 @@ object AzureSearchWriter extends IndexParser with SLogging {
   }
 
   def write(df: DataFrame, options: Map[String, String] = Map()): Unit = {
-    prepareDF(df, options).foreachPartition(it => it.foreach(_ => ()))
+    prepareDF(df, options).foreachPartition((it: Iterator[Row]) => it.foreach(_ => ()))
   }
 
   def stream(df: DataFrame, options: java.util.HashMap[String, String]): DataStreamWriter[Row] = {

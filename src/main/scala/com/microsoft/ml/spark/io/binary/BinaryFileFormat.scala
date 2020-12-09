@@ -5,7 +5,6 @@ package org.apache.spark.binary
 
 import java.io.{Closeable, InputStream}
 import java.net.URI
-
 import com.microsoft.ml.spark.core.env.StreamUtilities.ZipIterator
 import com.microsoft.ml.spark.core.schema.BinaryFileSchema
 import org.apache.commons.io.{FilenameUtils, IOUtils}
@@ -22,7 +21,7 @@ import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.{SerializableConfiguration, TaskCompletionListener}
 
 import scala.util.Random
 
@@ -164,7 +163,7 @@ class BinaryFileFormat extends TextBasedFileFormat with DataSourceRegister {
     assert(subsample >= 0.0 & subsample <= 1.0)
     (file: PartitionedFile) => {
       val fileReader = new HadoopFileReader(file, broadcastedHadoopConf.value.value, subsample, inspectZip, seed)
-      Option(TaskContext.get()).foreach(_.addTaskCompletionListener(_ => fileReader.close()))
+      Option(TaskContext.get()).foreach(_.addTaskCompletionListener((_ => fileReader.close()): TaskCompletionListener))
       fileReader.map { record =>
         val recordPath = record._1
         val bytes = record._2

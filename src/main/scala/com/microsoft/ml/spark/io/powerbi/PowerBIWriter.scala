@@ -7,7 +7,6 @@ import com.microsoft.ml.spark.io.http._
 import com.microsoft.ml.spark.stages._
 import org.apache.http.client.HttpResponseException
 import org.apache.log4j.{LogManager, Logger}
-import org.apache.spark.ml.NamespaceInjections
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.streaming.DataStreamWriter
 import org.apache.spark.sql.{DataFrame, ForeachWriter, Row}
@@ -98,7 +97,7 @@ object PowerBIWriter {
   }
 
   def write(df: DataFrame, url: String, options: Map[String, String] = Map()): Unit = {
-    prepareDF(df, url, options).foreachPartition(it => it.foreach(_ => ()))
+    prepareDF(df, url, options).foreachPartition((it: Iterator[Row]) => it.foreach(_ => ()))
   }
 
   def stream(df: DataFrame, url: String,

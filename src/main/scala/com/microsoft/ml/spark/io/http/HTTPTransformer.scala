@@ -3,6 +3,7 @@
 
 package com.microsoft.ml.spark.io.http
 
+import com.microsoft.ml.spark.SparkUserDefinedFunctionAccessor
 import com.microsoft.ml.spark.core.contracts.{HasInputCol, HasOutputCol, Wrappable}
 import com.microsoft.ml.spark.io.http.HandlingUtils.HandlerFunc
 import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable, Transformer}
@@ -21,7 +22,7 @@ trait HasHandler extends Params {
     this, "handler", "Which strategy to use when handling requests")
 
   /** @group getParam */
-  def getHandler: HandlerFunc = $(handler).f.asInstanceOf[HandlerFunc]
+  def getHandler: HandlerFunc = SparkUserDefinedFunctionAccessor.getF($(handler)).asInstanceOf[HandlerFunc]
 
   def setHandler(v: HandlerFunc): HasHandler.this.type = {
     set(handler, udf(v, StringType))

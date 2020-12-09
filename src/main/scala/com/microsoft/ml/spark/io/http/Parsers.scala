@@ -3,6 +3,7 @@
 
 package com.microsoft.ml.spark.io.http
 
+import com.microsoft.ml.spark.SparkUserDefinedFunctionAccessor
 import com.microsoft.ml.spark.core.contracts.{HasInputCol, HasOutputCol, Wrappable}
 import com.microsoft.ml.spark.core.env.InternalWrapper
 import com.microsoft.ml.spark.core.schema.DatasetExtensions.{findUnusedColumnName => newCol}
@@ -89,7 +90,7 @@ class CustomInputParser(val uid: String) extends HTTPInputParser with ComplexPar
 
   val udfScala = new UDFParam(
       this, "udfScala", "User Defined Function to be applied to the DF input col",
-      { x: UserDefinedFunction => x.dataType == HTTPSchema.Request })
+      { x: UserDefinedFunction => SparkUserDefinedFunctionAccessor.getDatatype(x) == HTTPSchema.Request })
 
   val udfPython = new UDPyFParam(
       this, "udfPython", "User Defined Python Function to be applied to the DF input col",
@@ -261,7 +262,7 @@ class CustomOutputParser(val uid: String) extends HTTPOutputParser with ComplexP
     assert(schema(getInputCol).dataType == HTTPSchema.Response)
     schema.add(getOutputCol, {
       (get(udfScala), get(udfPython)) match {
-        case (Some(f), None) => f.dataType
+        case (Some(f), None) => SparkUserDefinedFunctionAccessor.getDatatype(f)
         case (None, Some(f)) => f.dataType
         case _ => throw new IllegalArgumentException("Need to set either parseOutput or parseOutputPy")
       }

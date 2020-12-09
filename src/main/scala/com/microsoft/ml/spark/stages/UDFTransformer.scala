@@ -2,7 +2,7 @@
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.ml.spark.stages
-
+import com.microsoft.ml.spark.SparkUserDefinedFunctionAccessor
 import com.microsoft.ml.spark.core.contracts.{HasInputCol, HasInputCols, HasOutputCol, Wrappable}
 import com.microsoft.ml.spark.core.env.InternalWrapper
 import com.microsoft.ml.spark.core.serialize.ComplexParam
@@ -75,7 +75,7 @@ class UDFTransformer(val uid: String) extends Transformer with Wrappable with Co
   }
 
   def getDataType: DataType =  {
-    if (isSet(udfScala)) getUDF.dataType
+    if (isSet(udfScala)) SparkUserDefinedFunctionAccessor.getDatatype(getUDF)
     else getUDPyF.dataType
   }
 

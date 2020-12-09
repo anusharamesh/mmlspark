@@ -3,15 +3,8 @@
 
 package org.apache.spark.sql.execution.streaming
 
-import java.net.{InetAddress, InetSocketAddress}
-import java.util.UUID
-import java.util.concurrent.Executors
-
-import com.microsoft.ml.spark.core.env.StreamUtilities.usingMany
 import com.microsoft.ml.spark.io.http.{HTTPRequestData, HTTPResponseData, SharedSingleton}
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
-import javax.annotation.concurrent.GuardedBy
-import org.apache.commons.io.IOUtils
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
@@ -20,6 +13,10 @@ import org.apache.spark.sql.sources.{DataSourceRegister, StreamSinkProvider, Str
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._
 
+import java.net.{InetAddress, InetSocketAddress}
+import java.util.UUID
+import java.util.concurrent.Executors
+import javax.annotation.concurrent.GuardedBy
 import scala.collection.mutable.ListBuffer
 import scala.collection.{immutable, mutable}
 
@@ -250,7 +247,7 @@ class DistributedHTTPSource(name: String,
   }
 
   private[spark] val serverInfoDFStreaming = {
-    val serverInfoConfRDD = serverInfoDF.rdd.map(infoEnc.toRow)
+    val serverInfoConfRDD = serverInfoDF.rdd.map(infoEnc.createSerializer().apply(_))
     sqlContext.sparkSession.internalCreateDataFrame(
       serverInfoConfRDD, schema, isStreaming = true)
   }
@@ -295,15 +292,15 @@ class DistributedHTTPSource(name: String,
     if (newOffset.offset < lastOffsetCommitted.offset) {
       sys.error(s"Offsets committed out of order: $lastOffsetCommitted followed by $end")
     }
-    serverInfoDF.foreachPartition(_ =>
-      server.get.trimBatchesBefore(newOffset.offset))
+    serverInfoDF.foreachPartition((_ =>
+      server.get.trimBatchesBefore(newOffset.offset)):Iterator[org.apache.spark.sql.Row] => Unit)
     lastOffsetCommitted = newOffset
   }
 
   /** Stop this source. */
   override def stop(): Unit = synchronized {
-    serverInfoDF.foreachPartition(_ =>
-      server.get.stop())
+    serverInfoDF.foreachPartition((_ =>
+      server.get.stop()):Iterator[org.apache.spark.sql.Row] => Unit)
     ()
   }
 
