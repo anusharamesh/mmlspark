@@ -21,7 +21,8 @@ import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.connector.catalog.{SupportsRead, TableProvider}
+import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapability, TableProvider}
+import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.connector.read.streaming._
 import org.apache.spark.sql.execution.streaming.HTTPServerUtils
@@ -33,6 +34,7 @@ import org.apache.spark.{SparkContext, TaskContext}
 import org.json4s.DefaultFormats
 import org.json4s.jackson.Serialization
 
+import java.util
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -41,7 +43,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Try
 
-abstract class HTTPSourceProviderV2 extends DataSourceRegister
+class HTTPSourceProviderV2 extends DataSourceRegister
   with TableProvider with SupportsRead with MicroBatchStream with Logging {
 
   def createContinuousReader(schema: Optional[StructType],
@@ -58,6 +60,33 @@ abstract class HTTPSourceProviderV2 extends DataSourceRegister
     logInfo("Creating Microbatch reader")
     new HTTPMicroBatchReader(continuous = false, options = options)
   }
+
+  override def inferSchema(options: CaseInsensitiveStringMap): StructType = ???
+
+  override def getTable(schema: StructType, partitioning: Array[Transform],
+                        properties: util.Map[String, String]): Table = ???
+
+  override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = ???
+
+  override def latestOffset(): Offset = ???
+
+  override def planInputPartitions(start: Offset, `end`: Offset): Array[InputPartition] = ???
+
+  override def createReaderFactory(): PartitionReaderFactory = ???
+
+  override def initialOffset(): Offset = ???
+
+  override def deserializeOffset(json: String): Offset = ???
+
+  override def commit(`end`: Offset): Unit = ???
+
+  override def stop(): Unit = ???
+
+  override def name(): String = ???
+
+  override def schema(): StructType = ???
+
+  override def capabilities(): util.Set[TableCapability] = ???
 }
 
 

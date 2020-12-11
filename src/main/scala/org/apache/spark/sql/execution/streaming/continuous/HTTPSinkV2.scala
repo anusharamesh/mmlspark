@@ -7,17 +7,19 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.sources.DataSourceRegister
-import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory, PhysicalWriteInfo, WriterCommitMessage}
-import org.apache.spark.sql.connector.catalog.SupportsWrite
+import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory, LogicalWriteInfo, PhysicalWriteInfo, WriteBuilder, WriterCommitMessage}
+import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableProvider}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.connector.catalog.TableProvider
+import org.apache.spark.sql.connector.expressions.Transform
 
 import scala.collection.mutable
 import org.apache.spark.sql.connector.write.streaming.{StreamingDataWriterFactory, StreamingWrite}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-abstract class HTTPSinkProviderV2 extends TableProvider
+import java.util
+
+class HTTPSinkProviderV2 extends TableProvider
   with SupportsWrite
   with DataSourceRegister {
 
@@ -30,6 +32,17 @@ abstract class HTTPSinkProviderV2 extends TableProvider
 
   def shortName(): String = "HTTPv2"
   def name(): String = "HTTPv2"
+
+  override def inferSchema(options: CaseInsensitiveStringMap): StructType = ???
+
+  override def getTable(schema: StructType,
+                        partitioning: Array[Transform], properties: util.Map[String, String]): Table = ???
+
+  override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = ???
+
+  override def schema(): StructType = ???
+
+  override def capabilities(): util.Set[TableCapability] = ???
 }
 
 /** Common methods used to create writes for the the console sink */
