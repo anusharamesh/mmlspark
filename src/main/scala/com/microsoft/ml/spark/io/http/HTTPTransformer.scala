@@ -22,7 +22,7 @@ trait HasHandler extends Params {
     this, "handler", "Which strategy to use when handling requests")
 
   /** @group getParam */
-  def getHandler: HandlerFunc = SparkUserDefinedFunctionAccessor.getF($(handler)).asInstanceOf[HandlerFunc]
+  def getHandler: HandlerFunc = $(handler).asInstanceOf[HandlerFunc]
 
   def setHandler(v: HandlerFunc): HasHandler.this.type = {
     set(handler, udf(v, StringType))

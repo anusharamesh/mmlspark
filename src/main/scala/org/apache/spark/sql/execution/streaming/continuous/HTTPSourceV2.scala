@@ -7,11 +7,11 @@ import java.io.{BufferedReader, InputStreamReader}
 import java.net.{InetAddress, InetSocketAddress, ServerSocket, URL}
 import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
 import java.util.{Optional, UUID}
-
 import com.jcraft.jsch.Session
 import com.microsoft.ml.spark.core.env.StreamUtilities
 import com.microsoft.ml.spark.io.http._
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
+
 import javax.annotation.concurrent.GuardedBy
 import org.apache.commons.io.IOUtils
 import org.apache.http.client.config.RequestConfig
@@ -21,6 +21,7 @@ import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.connector.catalog.{SupportsRead, TableProvider}
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.connector.read.streaming._
 import org.apache.spark.sql.execution.streaming.HTTPServerUtils
@@ -40,11 +41,28 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Try
 
+abstract class HTTPSourceProviderV2 extends DataSourceRegister
+  with TableProvider with SupportsRead with MicroBatchStream with Logging {
 
-class HTTPSourceProviderV2
-  extends DataSourceRegister with Logging {
+  def createContinuousReader(schema: Optional[StructType],
+                             checkpointLocation: String,
+                             options: CaseInsensitiveStringMap): ContinuousStream = {
+    new HTTPContinuousReader(options = options)
+  }
 
   override def shortName(): String = "HTTPv2"
+
+  def createMicroBatchReader(schema: Optional[StructType],
+                             checkpointLocation: String,
+                             options: CaseInsensitiveStringMap): HTTPMicroBatchReader = {
+    logInfo("Creating Microbatch reader")
+    new HTTPMicroBatchReader(continuous = false, options = options)
+  }
+}
+
+
+object HTTPSourceProviderV2 {
+  val VERSION = 2
 }
 
 private[streaming] case class ServiceInfo(name: String,
@@ -164,7 +182,7 @@ private[streaming] case class WorkerServiceConfig(host: String,
                                                   epochLength: Long
                                                  )
 
-private[streaming] class HTTPMicroBatchStream(continuous: Boolean, options: CaseInsensitiveStringMap)
+private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: CaseInsensitiveStringMap)
   extends MicroBatchStream with Logging {
   implicit val defaultFormats: DefaultFormats = DefaultFormats
 
@@ -223,7 +241,7 @@ private[streaming] class HTTPMicroBatchStream(continuous: Boolean, options: Case
     HTTPSourceStateHolder.cleanUp(name)
   }
 
-  override def planInputPartitions(start: Offset, end: Offset): Array[InputPartition] = {
+  override def planInputPartitions(start: Offset, end: Offset): java.util.List[InputPartition] = {
     assert(startOffset != null,
       "start offset should already be set before create read tasks.")
     if (!continuous) {
@@ -238,16 +256,16 @@ private[streaming] class HTTPMicroBatchStream(continuous: Boolean, options: Case
     Range(0, numPartitions).map { i =>
       HTTPInputPartition(continuous, name, config, startMap(i), endMap.map(_ (i)), i)
         : InputPartition
-    }.toArray
+    }.toList.asJava
   }
 
-  override def createReaderFactory(): PartitionReaderFactory = {
+   override def createReaderFactory(): PartitionReaderFactory = {
 
     val startMap = getPartitionOffsetMap(startOffset)
     val endMap = if (!continuous) Some(getPartitionOffsetMap(endOffset)) else None
     val config = WorkerServiceConfig(host, port, path, forwardingOptions,
       DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
-    HTTPMicroBatchReaderFactory(continuous = true, name, config, startMap(0), endMap.map(_ (0)), 0)
+    HTTPMicroBatchReaderFactory(continuous = false, name, config, startMap(0), endMap.map(_ (0)), 0)
   }
 }
 
@@ -257,14 +275,14 @@ private[streaming] case class HTTPMicroBatchReaderFactory(continuous: Boolean,
                                                           startEpoch: Long,
                                                           endEpoch: Option[Long],
                                                           partitionIndex: Int)
-  extends ContinuousPartitionReaderFactory {
+  extends PartitionReaderFactory {
   override def createReader(partition: InputPartition): ContinuousPartitionReader[InternalRow] = {
     new HTTPInputPartitionReader(continuous, name, config, startEpoch, endEpoch, partitionIndex)
   }
 }
 
-private[streaming] class HTTPContinuousStream(options: CaseInsensitiveStringMap)
-  extends HTTPMicroBatchStream(continuous = true, options = options) with ContinuousStream {
+private[streaming] class HTTPContinuousReader(options: CaseInsensitiveStringMap)
+  extends HTTPMicroBatchReader(continuous = true, options = options) with ContinuousStream {
 
   def initialOffset(start: Optional[Offset]): Unit =
     this.startOffset = start.orElse(HTTPOffset.getStartingOffset(numPartitions))
@@ -295,7 +313,7 @@ private[streaming] class HTTPContinuousStream(options: CaseInsensitiveStringMap)
     val startMap = getPartitionOffsetMap(startOffset)
     val config = WorkerServiceConfig(host, port, path, forwardingOptions,
       DriverServiceUtils.getDriverHost, driverService.getAddress.getPort, epochLength)
-    HTTPContinuousReaderFactory(continuous = true, name, config, startMap(0), Option[Long](0), 0)
+    HTTPContinuousReaderFactory(continuous = true, name, config, startMap(0), Option.empty[Long], 0)
   }
 }
 
@@ -321,13 +339,13 @@ private[streaming] case class HTTPInputPartition(continuous: Boolean,
   extends InputPartition with Logging {
 
    def createContinuousReader(
-                                       offset: PartitionOffset): PartitionReader[InternalRow] = {
+                                       offset: PartitionOffset): ContinuousPartitionReader[InternalRow] = {
     new HTTPInputPartitionReader(
       continuous, name, config, startValue, endValue, partitionIndex
     )
   }
 
-   def createPartitionReader(): PartitionReader[InternalRow] = {
+   def createPartitionReader(): ContinuousPartitionReader[InternalRow] = {
     logInfo("creating partition reader")
     new HTTPInputPartitionReader(
       continuous, name, config, startValue, endValue, partitionIndex

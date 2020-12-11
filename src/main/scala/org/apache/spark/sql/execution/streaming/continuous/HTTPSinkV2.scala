@@ -1,23 +1,31 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License. See LICENSE in project root for information.
-
 package org.apache.spark.sql.execution.streaming.continuous
 
+import com.microsoft.ml.spark._
 import com.microsoft.ml.spark.io.http.HTTPResponseData
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.connector.write._
-import org.apache.spark.sql.connector.write.streaming._
 import org.apache.spark.sql.sources.DataSourceRegister
+import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory, WriterCommitMessage}
+import org.apache.spark.sql.connector.catalog.SupportsWrite
+import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.connector.catalog.TableProvider
+import scala.collection.mutable
+import org.apache.spark.sql.connector.write.streaming.StreamingWrite
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-import scala.collection.mutable
+class HTTPSinkProviderV2 extends TableProvider
+  with SupportsWrite
+  with DataSourceRegister {
 
-class HTTPSinkProviderV2 extends DataSourceRegister
-  with Logging {
+  override def createStreamWriter(queryId: String,
+                                  schema: StructType,
+                                  mode: OutputMode,
+                                  options: CaseInsensitiveStringMap): StreamingWrite = {
+    new HTTPWriter(schema, options)
+  }
 
   def shortName(): String = "HTTPv2"
 }
@@ -26,8 +34,8 @@ class HTTPSinkProviderV2 extends DataSourceRegister
 class HTTPWriter(schema: StructType, options: CaseInsensitiveStringMap)
   extends StreamingWrite with Logging {
 
-  protected val idCol: String = options.get("idCol","id")
-  protected val replyCol: String = options.get("replyCol","reply")
+  protected val idCol: String = options.getOrDefault("idCol", "id")
+  protected val replyCol: String = options.getOrDefault("replyCol", "reply")
   protected val name: String = options.get("name")
 
   val idColIndex: Int = schema.fieldIndex(idCol)
@@ -35,6 +43,8 @@ class HTTPWriter(schema: StructType, options: CaseInsensitiveStringMap)
 
   assert(SparkSession.getActiveSession.isDefined)
 
+  def createWriterFactory(): DataWriterFactory =
+    HTTPWriterFactory(idColIndex, replyColIndex, name)
 
   override def commit(epochId: Long, messages: Array[WriterCommitMessage]): Unit = {}
 
@@ -42,16 +52,13 @@ class HTTPWriter(schema: StructType, options: CaseInsensitiveStringMap)
     HTTPSourceStateHolder.cleanUp(name)
   }
 
-  override def createStreamingWriterFactory(info: PhysicalWriteInfo): StreamingDataWriterFactory = {
-    HTTPWriterFactory(idColIndex, replyColIndex, name)
-  }
 }
 
 private[streaming] case class HTTPWriterFactory(idColIndex: Int,
                                                 replyColIndex: Int,
                                                 name: String)
-  extends StreamingDataWriterFactory with Logging {
-  override def createWriter(partitionId: Int, taskId: Long, epochId: Long): DataWriter[InternalRow] = {
+  extends DataWriterFactory {
+  def createDataWriter(partitionId: Int, taskId: Long, epochId: Long): DataWriter[InternalRow] = {
     new HTTPDataWriter(partitionId, idColIndex, replyColIndex, name, epochId)
   }
 }
@@ -93,8 +100,6 @@ private[streaming] class HTTPDataWriter(partitionId: Int,
       HTTPSourceStateHolder.cleanUp(name)
     }
   }
-
-  override def close(): Unit = {}
 }
 
 private[streaming] case class HTTPCommitMessage(ids: Array[(String, Int)]) extends WriterCommitMessage

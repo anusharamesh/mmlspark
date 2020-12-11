@@ -8,6 +8,7 @@ import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.connector.read.streaming.{Offset => OffsetV2}
 import org.apache.spark.sql.execution.streaming.continuous.HTTPSourceV2
 import org.apache.spark.sql.sources.{DataSourceRegister, StreamSinkProvider, StreamSourceProvider}
 import org.apache.spark.sql.streaming.OutputMode
@@ -126,9 +127,9 @@ class JVMSharedServer(name: String, host: String,
     // Increment the current batch so new requests are routed to the next batch
     if (end == currentBatch) incrementCurrentBatch()
     val requests = (start to end).flatMap { i =>
-        val mcm = batchesToRequests.getOrElse(i, new MultiChannelMap[ID, Request](nPartitions))
-        mcm.nextList().map(p => (p._1, p._2._1))
-      }
+      val mcm = batchesToRequests.getOrElse(i, new MultiChannelMap[ID, Request](nPartitions))
+      mcm.nextList().map(p => (p._1, p._2._1))
+    }
     logDebug(s"getting ${requests.length} on $address batch $currentBatch")
     requests
   }
@@ -136,7 +137,7 @@ class JVMSharedServer(name: String, host: String,
   def trimBatchesBefore(batch: Long): Unit = synchronized {
     val start = earliestBatch
     earliestBatch = batch
-      (start to batch).foreach(batchesToRequests.remove)
+    (start to batch).foreach(batchesToRequests.remove)
     logDebug(s"trimming ${(start to batch).toList} on $address")
   }
 
@@ -178,6 +179,7 @@ class JVMSharedServer(name: String, host: String,
         tryCreateServer(host, startingPort + 1, triesLeft - 1)
     }
   }
+
   //scalastyle:on magic.number
 
   @GuardedBy("this")
@@ -205,7 +207,7 @@ class DistributedHTTPSource(name: String,
                             maxPartitions: Option[Int],
                             handleResponseErrors: Boolean,
                             sqlContext: SQLContext)
-    extends Source with Logging with Serializable {
+  extends Source with Logging with Serializable {
 
   import sqlContext.implicits._
 
@@ -240,14 +242,14 @@ class DistributedHTTPSource(name: String,
     serverInfoConfigured.collect() // materialize to trigger setup
 
     logInfo("Got or Created services: "
-      + serverInfoConfigured.collect().map {r =>
-        s"\n\t machine: ${r.getString(0)}, address: ${r.getString(1)}, guid: ${r.getString(2)}"
-      }.toList.mkString(", "))
+      + serverInfoConfigured.collect().map { r =>
+      s"\n\t machine: ${r.getString(0)}, address: ${r.getString(1)}, guid: ${r.getString(2)}"
+    }.toList.mkString(", "))
     serverInfoConfigured
   }
 
   private[spark] val serverInfoDFStreaming = {
-    val serverInfoConfRDD = serverInfoDF.rdd.map(infoEnc.createSerializer().apply(_))
+    val serverInfoConfRDD = serverInfoDF.rdd.map(infoEnc.createSerializer())
     sqlContext.sparkSession.internalCreateDataFrame(
       serverInfoConfRDD, schema, isStreaming = true)
   }
@@ -262,45 +264,42 @@ class DistributedHTTPSource(name: String,
   override def schema: StructType = HTTPSourceV2.Schema
 
   // Note we assume that this function is only called once during the polling of a new batch
-  override def getOffset: Option[Offset] = synchronized {
+  override def getOffset(): Option[OffsetV2] = synchronized {
     currentOffset += 1
     Some(currentOffset)
   }
 
   /** Returns the data that is between the offsets (`start`, `end`]. */
-  override def getBatch(start: Option[Offset], end: Offset): DataFrame = synchronized {
+  override def getBatch(start: Option[OffsetV2], end: OffsetV2): DataFrame = synchronized {
     val startOrdinal =
       start.map(_.asInstanceOf[LongOffset]).getOrElse(LongOffset(-1)).offset
-    val endOrdinal = Option(end.asInstanceOf[LongOffset]).getOrElse(LongOffset(-1)).offset
+    val endOrdinal = end.asInstanceOf[LongOffset].offset
     val toRow = HTTPRequestData.makeToRowConverter
 
     serverInfoDFStreaming.mapPartitions { _ =>
       val s = server.get
       s.updateCurrentBatch(currentOffset.offset)
       s.getRequests(startOrdinal, endOrdinal)
-        .map{ case (id, request) =>
+        .map { case (id, request) =>
           Row.fromSeq(Seq(Row(null, id, null), toRow(request)))
         }.toIterator
     }(RowEncoder(HTTPSourceV2.Schema))
   }
 
-  override def commit(end: Offset): Unit = synchronized {
-    val newOffset = Option(end.asInstanceOf[LongOffset]).getOrElse(
-      sys.error(s"DistributedHTTPSource.commit() received an offset ($end) that did not " +
-        s"originate with an instance of this class")
-    )
+  override def commit(end: OffsetV2): Unit = synchronized {
+    val newOffset = end.asInstanceOf[LongOffset]
     if (newOffset.offset < lastOffsetCommitted.offset) {
       sys.error(s"Offsets committed out of order: $lastOffsetCommitted followed by $end")
     }
-    serverInfoDF.foreachPartition((_ =>
-      server.get.trimBatchesBefore(newOffset.offset)):Iterator[org.apache.spark.sql.Row] => Unit)
+    serverInfoDF.foreachPartition((f: Iterator[Row]) =>
+      server.get.trimBatchesBefore(newOffset.offset))
     lastOffsetCommitted = newOffset
   }
 
   /** Stop this source. */
   override def stop(): Unit = synchronized {
-    serverInfoDF.foreachPartition((_ =>
-      server.get.stop()):Iterator[org.apache.spark.sql.Row] => Unit)
+    serverInfoDF.foreachPartition((f: Iterator[Row]) =>
+      server.get.stop())
     ()
   }
 
@@ -351,13 +350,13 @@ class DistributedHTTPSourceProvider extends StreamSourceProvider with DataSource
     source
   }
 
-   /** String that represents the format that this data source provider uses. */
+  /** String that represents the format that this data source provider uses. */
   override def shortName(): String = "DistributedHTTP"
 
 }
 
 class DistributedHTTPSink(val options: Map[String, String])
-    extends Sink with Logging with Serializable {
+  extends Sink with Logging with Serializable {
 
   if (!options.contains("name")) {
     throw new AnalysisException("Set a name of an API to reply to")

@@ -97,7 +97,7 @@ object PowerBIWriter {
   }
 
   def write(df: DataFrame, url: String, options: Map[String, String] = Map()): Unit = {
-    prepareDF(df, url, options).foreachPartition((it: Iterator[Row]) => it.foreach(_ => ()))
+    prepareDF(df, url, options).foreach(_ => ())
   }
 
   def stream(df: DataFrame, url: String,

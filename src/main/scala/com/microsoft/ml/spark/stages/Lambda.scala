@@ -3,12 +3,11 @@
 
 package com.microsoft.ml.spark.stages
 
-import com.microsoft.ml.spark.SparkUserDefinedFunctionAccessor
 import com.microsoft.ml.spark.core.contracts.Wrappable
 import org.apache.spark.SparkContext
-import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable, Transformer}
 import org.apache.spark.ml.param.{ParamMap, UDFParam}
 import org.apache.spark.ml.util.Identifiable
+import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable, Transformer}
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
@@ -29,7 +28,7 @@ class Lambda(val uid: String) extends Transformer with Wrappable with ComplexPar
   }
 
   def getTransform: Dataset[_] => DataFrame = {
-    SparkUserDefinedFunctionAccessor.getF($(transformFunc)).asInstanceOf[Dataset[_] => DataFrame]
+    $(transformFunc).asInstanceOf[Dataset[_] => DataFrame]
   }
 
   val transformSchemaFunc = new UDFParam(this, "transformSchemaFunc", "the output schema after the transformation")
@@ -39,7 +38,7 @@ class Lambda(val uid: String) extends Transformer with Wrappable with ComplexPar
   }
 
   def getTransformSchema: StructType => StructType = {
-    SparkUserDefinedFunctionAccessor.getF($(transformSchemaFunc)).asInstanceOf[StructType => StructType]
+    $(transformSchemaFunc).asInstanceOf[StructType => StructType]
   }
 
   override def transform(dataset: Dataset[_]): DataFrame = {
