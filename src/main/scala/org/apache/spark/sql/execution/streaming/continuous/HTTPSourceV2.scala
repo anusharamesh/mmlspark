@@ -241,7 +241,7 @@ private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: Case
     HTTPSourceStateHolder.cleanUp(name)
   }
 
-  override def planInputPartitions(start: Offset, end: Offset): java.util.List[InputPartition] = {
+  override def planInputPartitions(start: Offset, end: Offset): Array[InputPartition] = {
     assert(startOffset != null,
       "start offset should already be set before create read tasks.")
     if (!continuous) {
@@ -256,7 +256,7 @@ private[streaming] class HTTPMicroBatchReader(continuous: Boolean, options: Case
     Range(0, numPartitions).map { i =>
       HTTPInputPartition(continuous, name, config, startMap(i), endMap.map(_ (i)), i)
         : InputPartition
-    }.toList.asJava
+    }.toArray
   }
 
    override def createReaderFactory(): PartitionReaderFactory = {

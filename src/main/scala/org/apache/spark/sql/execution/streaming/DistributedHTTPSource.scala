@@ -264,13 +264,13 @@ class DistributedHTTPSource(name: String,
   override def schema: StructType = HTTPSourceV2.Schema
 
   // Note we assume that this function is only called once during the polling of a new batch
-  override def getOffset(): Option[OffsetV2] = synchronized {
+  override def getOffset(): Option[Offset] = synchronized {
     currentOffset += 1
     Some(currentOffset)
   }
 
   /** Returns the data that is between the offsets (`start`, `end`]. */
-  override def getBatch(start: Option[OffsetV2], end: OffsetV2): DataFrame = synchronized {
+  override def getBatch(start: Option[Offset], end: Offset): DataFrame = synchronized {
     val startOrdinal =
       start.map(_.asInstanceOf[LongOffset]).getOrElse(LongOffset(-1)).offset
     val endOrdinal = end.asInstanceOf[LongOffset].offset
@@ -304,7 +304,6 @@ class DistributedHTTPSource(name: String,
   }
 
   override def toString: String = s"DistributedHTTPSource[name: $name, host: $host, port: $port]"
-
 }
 
 class DistributedHTTPSourceProvider extends StreamSourceProvider with DataSourceRegister with Logging {

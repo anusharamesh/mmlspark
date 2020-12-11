@@ -7,20 +7,21 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.sources.DataSourceRegister
-import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory, WriterCommitMessage}
+import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory, PhysicalWriteInfo, WriterCommitMessage}
 import org.apache.spark.sql.connector.catalog.SupportsWrite
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.connector.catalog.TableProvider
+
 import scala.collection.mutable
-import org.apache.spark.sql.connector.write.streaming.StreamingWrite
+import org.apache.spark.sql.connector.write.streaming.{StreamingDataWriterFactory, StreamingWrite}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-class HTTPSinkProviderV2 extends TableProvider
+abstract class HTTPSinkProviderV2 extends TableProvider
   with SupportsWrite
   with DataSourceRegister {
 
-  override def createStreamWriter(queryId: String,
+  def createStreamWriter(queryId: String,
                                   schema: StructType,
                                   mode: OutputMode,
                                   options: CaseInsensitiveStringMap): StreamingWrite = {
@@ -28,6 +29,7 @@ class HTTPSinkProviderV2 extends TableProvider
   }
 
   def shortName(): String = "HTTPv2"
+  def name(): String = "HTTPv2"
 }
 
 /** Common methods used to create writes for the the console sink */
@@ -43,22 +45,21 @@ class HTTPWriter(schema: StructType, options: CaseInsensitiveStringMap)
 
   assert(SparkSession.getActiveSession.isDefined)
 
-  def createWriterFactory(): DataWriterFactory =
-    HTTPWriterFactory(idColIndex, replyColIndex, name)
-
   override def commit(epochId: Long, messages: Array[WriterCommitMessage]): Unit = {}
 
   def abort(epochId: Long, messages: Array[WriterCommitMessage]): Unit = {
     HTTPSourceStateHolder.cleanUp(name)
   }
 
+  override def createStreamingWriterFactory(info: PhysicalWriteInfo): StreamingDataWriterFactory =
+    HTTPWriterFactory(idColIndex, replyColIndex, name)
 }
 
 private[streaming] case class HTTPWriterFactory(idColIndex: Int,
                                                 replyColIndex: Int,
                                                 name: String)
-  extends DataWriterFactory {
-  def createDataWriter(partitionId: Int, taskId: Long, epochId: Long): DataWriter[InternalRow] = {
+  extends StreamingDataWriterFactory {
+  def createWriter(partitionId: Int, taskId: Long, epochId: Long): DataWriter[InternalRow] = {
     new HTTPDataWriter(partitionId, idColIndex, replyColIndex, name, epochId)
   }
 }
@@ -99,6 +100,11 @@ private[streaming] class HTTPDataWriter(partitionId: Int,
     if (TaskContext.get().getKillReason().contains("Stage cancelled")) {
       HTTPSourceStateHolder.cleanUp(name)
     }
+  }
+
+  override def close(): Unit = {
+    HTTPSourceStateHolder.cleanUp(name)
+    ids.clear()
   }
 }
 
